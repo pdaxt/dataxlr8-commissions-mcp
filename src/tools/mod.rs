@@ -1,9 +1,9 @@
+use dataxlr8_mcp_core::mcp::{make_schema, empty_schema, json_result, error_result, get_str, get_f64, get_i64};
 use dataxlr8_mcp_core::Database;
 use rmcp::model::*;
 use rmcp::service::{RequestContext, RoleServer};
 use rmcp::ServerHandler;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use tracing::info;
 
 // ============================================================================
@@ -67,30 +67,8 @@ pub struct LeaderboardEntry {
 }
 
 // ============================================================================
-// Tool schema helpers
+// Tool definitions
 // ============================================================================
-
-fn make_schema(
-    properties: serde_json::Value,
-    required: Vec<&str>,
-) -> Arc<serde_json::Map<String, serde_json::Value>> {
-    let mut m = serde_json::Map::new();
-    m.insert("type".into(), serde_json::Value::String("object".into()));
-    m.insert("properties".into(), properties);
-    if !required.is_empty() {
-        m.insert(
-            "required".into(),
-            serde_json::Value::Array(required.into_iter().map(|s| serde_json::Value::String(s.into())).collect()),
-        );
-    }
-    Arc::new(m)
-}
-
-fn empty_schema() -> Arc<serde_json::Map<String, serde_json::Value>> {
-    let mut m = serde_json::Map::new();
-    m.insert("type".into(), serde_json::Value::String("object".into()));
-    Arc::new(m)
-}
 
 fn build_tools() -> Vec<Tool> {
     vec![
@@ -190,29 +168,6 @@ impl CommissionsMcpServer {
         Self { db }
     }
 
-    fn json_result<T: Serialize>(data: &T) -> CallToolResult {
-        match serde_json::to_string_pretty(data) {
-            Ok(json) => CallToolResult::success(vec![Content::text(json)]),
-            Err(e) => CallToolResult::error(vec![Content::text(format!("Serialization error: {e}"))]),
-        }
-    }
-
-    fn error_result(msg: &str) -> CallToolResult {
-        CallToolResult::error(vec![Content::text(msg.to_string())])
-    }
-
-    fn get_str(args: &serde_json::Value, key: &str) -> Option<String> {
-        args.get(key).and_then(|v| v.as_str()).map(String::from)
-    }
-
-    fn get_f64(args: &serde_json::Value, key: &str) -> Option<f64> {
-        args.get(key).and_then(|v| v.as_f64())
-    }
-
-    fn get_i64(args: &serde_json::Value, key: &str) -> Option<i64> {
-        args.get(key).and_then(|v| v.as_i64())
-    }
-
     // ---- Tool handlers ----
 
     async fn handle_list_managers(&self) -> CallToolResult {
@@ -220,45 +175,45 @@ impl CommissionsMcpServer {
             .fetch_all(self.db.pool())
             .await
         {
-            Ok(managers) => Self::json_result(&managers),
-            Err(e) => Self::error_result(&format!("Database error: {e}")),
+            Ok(managers) => json_result(&managers),
+            Err(e) => error_result(&format!("Database error: {e}")),
         }
     }
 
     async fn handle_get_manager(&self, args: &serde_json::Value) -> CallToolResult {
-        let manager: Option<Manager> = if let Some(id) = Self::get_str(args, "id") {
+        let manager: Option<Manager> = if let Some(id) = get_str(args, "id") {
             sqlx::query_as("SELECT * FROM commissions.managers WHERE id = $1")
                 .bind(&id)
                 .fetch_optional(self.db.pool())
                 .await
                 .unwrap_or(None)
-        } else if let Some(email) = Self::get_str(args, "email") {
+        } else if let Some(email) = get_str(args, "email") {
             sqlx::query_as("SELECT * FROM commissions.managers WHERE email = $1")
                 .bind(&email)
                 .fetch_optional(self.db.pool())
                 .await
                 .unwrap_or(None)
         } else {
-            return Self::error_result("Provide either id or email");
+            return error_result("Provide either id or email");
         };
 
         match manager {
-            Some(m) => Self::json_result(&m),
-            None => Self::error_result("Manager not found"),
+            Some(m) => json_result(&m),
+            None => error_result("Manager not found"),
         }
     }
 
     async fn handle_create_manager(&self, args: &serde_json::Value) -> CallToolResult {
-        let name = match Self::get_str(args, "name") {
+        let name = match get_str(args, "name") {
             Some(n) => n,
-            None => return Self::error_result("Missing required: name"),
+            None => return error_result("Missing required: name"),
         };
-        let email = match Self::get_str(args, "email") {
+        let email = match get_str(args, "email") {
             Some(e) => e,
-            None => return Self::error_result("Missing required: email"),
+            None => return error_result("Missing required: email"),
         };
-        let role = Self::get_str(args, "role").unwrap_or_else(|| "manager".into());
-        let rate = Self::get_f64(args, "commission_rate").unwrap_or(0.10);
+        let role = get_str(args, "role").unwrap_or_else(|| "manager".into());
+        let rate = get_f64(args, "commission_rate").unwrap_or(0.10);
         let id = uuid::Uuid::new_v4().to_string();
 
         match sqlx::query_as::<_, Manager>(
@@ -271,27 +226,27 @@ impl CommissionsMcpServer {
         {
             Ok(m) => {
                 info!(id = id, name = name, "Created manager");
-                Self::json_result(&m)
+                json_result(&m)
             }
-            Err(e) => Self::error_result(&format!("Failed to create manager: {e}")),
+            Err(e) => error_result(&format!("Failed to create manager: {e}")),
         }
     }
 
     async fn handle_record_commission(&self, args: &serde_json::Value) -> CallToolResult {
-        let manager_id = match Self::get_str(args, "manager_id") {
+        let manager_id = match get_str(args, "manager_id") {
             Some(i) => i,
-            None => return Self::error_result("Missing required: manager_id"),
+            None => return error_result("Missing required: manager_id"),
         };
-        let client_id = match Self::get_str(args, "client_id") {
+        let client_id = match get_str(args, "client_id") {
             Some(i) => i,
-            None => return Self::error_result("Missing required: client_id"),
+            None => return error_result("Missing required: client_id"),
         };
-        let amount = match Self::get_f64(args, "amount") {
+        let amount = match get_f64(args, "amount") {
             Some(a) => a,
-            None => return Self::error_result("Missing required: amount"),
+            None => return error_result("Missing required: amount"),
         };
-        let project_id = Self::get_str(args, "project_id").unwrap_or_default();
-        let description = Self::get_str(args, "description").unwrap_or_default();
+        let project_id = get_str(args, "project_id").unwrap_or_default();
+        let description = get_str(args, "description").unwrap_or_default();
         let id = uuid::Uuid::new_v4().to_string();
 
         // Verify manager exists
@@ -301,7 +256,7 @@ impl CommissionsMcpServer {
             .await
             .unwrap_or(None);
         if exists.is_none() {
-            return Self::error_result(&format!("Manager '{manager_id}' not found"));
+            return error_result(&format!("Manager '{manager_id}' not found"));
         }
 
         match sqlx::query_as::<_, CommissionRecord>(
@@ -322,20 +277,20 @@ impl CommissionsMcpServer {
                 .await;
 
                 info!(id = id, manager_id = manager_id, amount = amount, "Recorded commission");
-                Self::json_result(&rec)
+                json_result(&rec)
             }
-            Err(e) => Self::error_result(&format!("Failed to record commission: {e}")),
+            Err(e) => error_result(&format!("Failed to record commission: {e}")),
         }
     }
 
     async fn handle_update_commission_status(&self, args: &serde_json::Value) -> CallToolResult {
-        let id = match Self::get_str(args, "id") {
+        let id = match get_str(args, "id") {
             Some(i) => i,
-            None => return Self::error_result("Missing required: id"),
+            None => return error_result("Missing required: id"),
         };
-        let new_status = match Self::get_str(args, "status") {
+        let new_status = match get_str(args, "status") {
             Some(s) => s,
-            None => return Self::error_result("Missing required: status"),
+            None => return error_result("Missing required: status"),
         };
 
         // Get existing record
@@ -347,12 +302,12 @@ impl CommissionsMcpServer {
         .await
         {
             Ok(r) => r,
-            Err(e) => return Self::error_result(&format!("Database error: {e}")),
+            Err(e) => return error_result(&format!("Database error: {e}")),
         };
 
         let existing = match existing {
             Some(r) => r,
-            None => return Self::error_result(&format!("Commission '{id}' not found")),
+            None => return error_result(&format!("Commission '{id}' not found")),
         };
 
         let old_status = &existing.status;
@@ -391,16 +346,16 @@ impl CommissionsMcpServer {
                 }
 
                 info!(id = id, old_status = old_status.as_str(), new_status = new_status, "Updated commission status");
-                Self::json_result(&rec)
+                json_result(&rec)
             }
-            Err(e) => Self::error_result(&format!("Failed to update: {e}")),
+            Err(e) => error_result(&format!("Failed to update: {e}")),
         }
     }
 
     async fn handle_get_commissions(&self, args: &serde_json::Value) -> CallToolResult {
-        let manager_id = Self::get_str(args, "manager_id");
-        let status = Self::get_str(args, "status");
-        let limit = Self::get_i64(args, "limit").unwrap_or(50);
+        let manager_id = get_str(args, "manager_id");
+        let status = get_str(args, "status");
+        let limit = get_i64(args, "limit").unwrap_or(50);
 
         let mut sql = String::from("SELECT * FROM commissions.commission_records WHERE 1=1");
         let mut param_idx = 1u32;
@@ -425,13 +380,13 @@ impl CommissionsMcpServer {
         query = query.bind(limit);
 
         match query.fetch_all(self.db.pool()).await {
-            Ok(records) => Self::json_result(&records),
-            Err(e) => Self::error_result(&format!("Database error: {e}")),
+            Ok(records) => json_result(&records),
+            Err(e) => error_result(&format!("Database error: {e}")),
         }
     }
 
     async fn handle_commission_stats(&self, args: &serde_json::Value) -> CallToolResult {
-        let manager_id = Self::get_str(args, "manager_id");
+        let manager_id = get_str(args, "manager_id");
 
         let (where_clause, bind_val) = match &manager_id {
             Some(mid) => (" WHERE manager_id = $1", Some(mid.clone())),
@@ -476,7 +431,7 @@ impl CommissionsMcpServer {
             sqlx::query_as(&recent_q).fetch_all(self.db.pool()).await.unwrap_or_default()
         };
 
-        Self::json_result(&CommissionStats {
+        json_result(&CommissionStats {
             total_earned: total.0,
             total_pending: pending.0,
             total_paid: paid.0,
@@ -510,9 +465,9 @@ impl CommissionsMcpServer {
                         deal_count: deal_count.0,
                     });
                 }
-                Self::json_result(&entries)
+                json_result(&entries)
             }
-            Err(e) => Self::error_result(&format!("Database error: {e}")),
+            Err(e) => error_result(&format!("Database error: {e}")),
         }
     }
 }
@@ -565,7 +520,7 @@ impl ServerHandler for CommissionsMcpServer {
                 "get_commissions" => self.handle_get_commissions(&args).await,
                 "commission_stats" => self.handle_commission_stats(&args).await,
                 "leaderboard" => self.handle_leaderboard().await,
-                _ => Self::error_result(&format!("Unknown tool: {}", request.name)),
+                _ => error_result(&format!("Unknown tool: {}", request.name)),
             };
 
             Ok(result)
