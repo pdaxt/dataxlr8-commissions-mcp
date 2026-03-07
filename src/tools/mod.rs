@@ -6,6 +6,13 @@ use rmcp::ServerHandler;
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
+
+// ============================================================================
+// Validation constants
+// ============================================================================
+
+const MAX_NAME_LEN: usize = 500;
+const MAX_EMAIL_LEN: usize = 500;
 // ============================================================================
 // Data types
 // ============================================================================
@@ -205,11 +212,21 @@ impl CommissionsMcpServer {
 
     async fn handle_create_manager(&self, args: &serde_json::Value) -> CallToolResult {
         let name = match get_str(args, "name") {
-            Some(n) => n,
+            Some(n) => {
+                let trimmed = n.trim().to_string();
+                if trimmed.is_empty() { return error_result("Parameter 'name' must not be empty"); }
+                if trimmed.len() > MAX_NAME_LEN { return error_result(&format!("'name' exceeds {} chars", MAX_NAME_LEN)); }
+                trimmed
+            }
             None => return error_result("Missing required: name"),
         };
         let email = match get_str(args, "email") {
-            Some(e) => e,
+            Some(e) => {
+                let trimmed = e.trim().to_string();
+                if trimmed.is_empty() { return error_result("Parameter 'email' must not be empty"); }
+                if trimmed.len() > MAX_EMAIL_LEN { return error_result(&format!("'email' exceeds {} chars", MAX_EMAIL_LEN)); }
+                trimmed
+            }
             None => return error_result("Missing required: email"),
         };
         let role = get_str(args, "role").unwrap_or_else(|| "manager".into());
