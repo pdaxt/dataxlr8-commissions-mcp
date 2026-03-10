@@ -5,6 +5,10 @@ edition = "2024"
 description = "Commission tracking MCP server for DataXLR8 platform"
 repository = "https://github.com/pdaxt/dataxlr8-commissions-mcp"
 
+
+[lib]
+name = "dataxlr8_commissions_mcp"
+path = "src/lib.rs"
 [dependencies]
 rmcp = { version = "0.17", features = ["server", "transport-io"] }
 dataxlr8-mcp-core = { path = "../dataxlr8-mcp-core" }
